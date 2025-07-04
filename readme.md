@@ -1,51 +1,57 @@
-import requests
-from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 import time
 
 BASE_URL = "https://pypi.org/search/?q=model+context+protocol+&page={}"
-TOTAL_PAGES = 3  # You can increase this
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-}
-DELAY = 1  # seconds
+TOTAL_PAGES = 3
+HEADLESS = False  # Set True after confirming it works
 
-results_list = []
+def run():
+    results = []
 
-for page in range(1, TOTAL_PAGES + 1):
-    url = BASE_URL.format(page)
-    print(f"\nScraping: {url}")
-    res = requests.get(url, headers=HEADERS)
+    with sync_playwright() as p:
+        # ✅ Launch real Chrome browser with anti-bot settings
+        browser = p.chromium.launch(
+            channel="chrome",
+            headless=HEADLESS,
+            args=[
+                "--start-maximized",
+                "--no-sandbox",
+                "--disable-blink-features=AutomationControlled",  # Anti-bot
+                "--disable-dev-shm-usage"
+            ]
+        )
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/115.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1920, "height": 1080},
+            java_script_enabled=True,
+            locale="en-US"
+        )
+        page = context.new_page()
 
-    if res.status_code != 200:
-        print(f"Error: Status {res.status_code}")
-        break
+        for page_no in range(1, TOTAL_PAGES + 1):
+            url = BASE_URL.format(page_no)
+            print(f"\n🟡 Visiting: {url}")
+            page.goto(url, wait_until="networkidle")
+            time.sleep(2)  # Human-like pause
 
-    soup = BeautifulSoup(res.text, 'html.parser')
-    packages = soup.find_all("a", class_="package-snippet")
+            items = page.query_selector_all("a.package-snippet")
 
-    for pkg in packages:
-        name = pkg.find("span", class_="package-snippet__name").text.strip()
-        version = pkg.find("span", class_="package-snippet__version").text.strip()
-        desc_tag = pkg.find("p", class_="package-snippet__description")
-        description = desc_tag.text.strip() if desc_tag else ""
-        link = "https://pypi.org" + pkg.get("href")
+            for item in items:
+                name = item.query_selector("span.package-snippet__name").inner_text().strip()
+                results.append(name)
+                print(f"  ✅ {name}")
 
-        results_list.append({
-            "name": name,
-            "version": version,
-            "description": description,
-            "link": link
-        })
+        browser.close()
 
-        print(f" - {name} ({version}): {description}")
+    with open("pypi_results.txt", "w", encoding="utf-8") as f:
+        for name in results:
+            f.write(name + "\n")
 
-    time.sleep(DELAY)
+    print(f"\n✅ Scraped {len(results)} packages successfully.")
 
-# Save results to file
-with open("pypi_packages_detailed.txt", "w", encoding="utf-8") as f:
-    for item in results_list:
-        f.write(f"{item['name']} ({item['version']})\n")
-        f.write(f"  Description: {item['description']}\n")
-        f.write(f"  Link: {item['link']}\n\n")
-
-print(f"\n✅ Scraped {len(results_list)} packages.")
+if __name__ == "__main__":
+    run()
