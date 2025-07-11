@@ -1,57 +1,37 @@
-from playwright.sync_api import sync_playwright
-import time
+from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.vector_stores.faiss import FaissVectorStore
 
-BASE_URL = "https://pypi.org/search/?q=model+context+protocol+&page={}"
-TOTAL_PAGES = 3
-HEADLESS = False  # Set True after confirming it works
+# 1. Load PDFs using SimpleDirectoryReader
+documents = SimpleDirectoryReader("./pdfs").load_data()  # <-- your folder path
 
-def run():
-    results = []
+# 2. Split into chunks (nodes)
+parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
+nodes = parser.get_nodes_from_documents(documents)
 
-    with sync_playwright() as p:
-        # ✅ Launch real Chrome browser with anti-bot settings
-        browser = p.chromium.launch(
-            channel="chrome",
-            headless=HEADLESS,
-            args=[
-                "--start-maximized",
-                "--no-sandbox",
-                "--disable-blink-features=AutomationControlled",  # Anti-bot
-                "--disable-dev-shm-usage"
-            ]
-        )
-        context = browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/115.0.0.0 Safari/537.36"
-            ),
-            viewport={"width": 1920, "height": 1080},
-            java_script_enabled=True,
-            locale="en-US"
-        )
-        page = context.new_page()
+# Print chunks
+print("🔹 Chunks:")
+for i, node in enumerate(nodes[:5]):  # just show first 5 chunks
+    print(f"--- Chunk {i+1} ---")
+    print(node.text[:300], "...\n")  # print first 300 chars of each chunk
+    print("Metadata:", node.metadata)
+    print()
 
-        for page_no in range(1, TOTAL_PAGES + 1):
-            url = BASE_URL.format(page_no)
-            print(f"\n🟡 Visiting: {url}")
-            page.goto(url, wait_until="networkidle")
-            time.sleep(2)  # Human-like pause
+# 3. Create embedding model
+embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-            items = page.query_selector_all("a.package-snippet")
+# 4. Print embeddings for first few nodes
+print("🔹 Embeddings:")
+for i, node in enumerate(nodes[:3]):
+    emb = embed_model.get_text_embedding(node.text)
+    print(f"Embedding {i+1} (dim={len(emb)}):", emb[:10], "...")  # show first 10 dims
+    print()
 
-            for item in items:
-                name = item.query_selector("span.package-snippet__name").inner_text().strip()
-                results.append(name)
-                print(f"  ✅ {name}")
+# 5. Create vector index
+vector_store = FaissVectorStore()
+index = VectorStoreIndex(nodes, embed_model=embed_model, vector_store=vector_store)
 
-        browser.close()
-
-    with open("pypi_results.txt", "w", encoding="utf-8") as f:
-        for name in results:
-            f.write(name + "\n")
-
-    print(f"\n✅ Scraped {len(results)} packages successfully.")
-
-if __name__ == "__main__":
-    run()
+# 6. Print vector index info
+print("🔹 Vector Index Info:")
+print("Number of vectors stored:", vector_store.faiss_index.ntotal)
